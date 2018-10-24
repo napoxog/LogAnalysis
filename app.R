@@ -314,7 +314,7 @@ server <- function(input, output,session) {
      plot(mcres[,input$selectOut]~mcres[,input$selectInp],col=pal[mcres$VVV12]);
      classes= sort(unique(mcres$VVV12))
      legend("topright",inset = c(0.01,0.01),legend = classes ,col = pal[classes],pch = 16)
-     #browser()
+     #browser( )
      #for(cls in unique(mcres$VVV12)) 
      cls = input$clsid
      {
