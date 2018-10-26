@@ -349,7 +349,7 @@ server <- function(input, output,session) {
        ab.pca=c(Intercept=BB,Gradient=KK)
        #descale ab.pca
        #ab.pca=c(Intercept=B*ab.pca[2]+ab.pca[1],Gradient=K*ab.pca[2])
-       predicted.pca=ab.pca[1]+ab.pca[2]*dat_scaled[,input$selectInp]  # no scaling
+       predicted.pca=ab.pca[1]+ab.pca[2]*dat[,input$selectInp]  # no scaling
        #predicted.pca=(predicted.pca-B)/K    #descale
        pca.cc=ccf(dat[,input$selectOut],predicted.pca,lag.max = 0,plot = F)$acf[[1]]
        
