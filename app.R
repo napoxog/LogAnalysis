@@ -155,7 +155,7 @@ tls_pca <- function (x, y) {
   v <- prcomp(cbind(x,y))$rotation
   beta <- v[2,1]/v[1,1]
   b0=mean(y)-beta*mean(x)
-  return(c(Intercept=b0,Gradient=beta))
+  return(c(Intercept = b0,Gradient = beta))
 }
 
 getTranspRamp <- function(color = NULL ,grades = 0.5,max_alpha=0.5) {
@@ -320,12 +320,13 @@ server <- function(input, output,session) {
      {
        dat = mcres[mcres$VVV12 == cls,]
        lm=glm(dat[,input$selectOut]~dat[,input$selectInp])#,family = Gamma)
-       ab=lm$coefficients
+       #ab=lm$coefficients
+       ab=c(Intercept = lm$coefficients[1],Gradient = lm$coefficients[2])
        predicted=ab[1]+ab[2]*dat[,input$selectInp]
        lm$cc=ccf(dat[,input$selectOut],predicted,lag.max = 0,plot = F)$acf[[1]]
        
        lm.inv=glm(dat[,input$selectInp]~dat[,input$selectOut])#,family = Gamma)
-       ab.inv=c(-lm.inv$coefficients[1]/lm.inv$coefficients[2],b=1/lm.inv$coefficients[2])
+       ab.inv=c(Intercept = -lm.inv$coefficients[1]/lm.inv$coefficients[2],Gradient = 1/lm.inv$coefficients[2])
        predicted.inv=ab.inv[1]+ab.inv[2]*dat[,input$selectInp]
        lm.inv$cc=ccf(dat[,input$selectOut],predicted.inv,lag.max = 0,plot = F)$acf[[1]]
        
@@ -334,12 +335,25 @@ server <- function(input, output,session) {
        #predicted.odr=ab.odr[1]+ab.odr[2]*dat[,input$selectInp]
        #odr.cc=ccf(dat[,input$selectOut],predicted.odr,lag.max = 0,plot = F)$acf[[1]]
        #browser()
-       
-       ab.pca=tls_pca(dat[,input$selectInp],dat[,input$selectOut])
-       predicted.pca=ab.pca[1]+ab.pca[2]*dat[,input$selectInp]
+       dat_scaled=scale(dat)
+       ab.pca=tls_pca(dat_scaled[,input$selectInp],dat_scaled[,input$selectOut])
+       K=ab.pca[2]
+       B=ab.pca[1]
+       Kx=attributes(dat_scaled)$`scaled:scale`[input$selectInp]
+       Bx=attributes(dat_scaled)$`scaled:center`[input$selectInp]
+       Ky=attributes(dat_scaled)$`scaled:scale`[input$selectOut]
+       By=attributes(dat_scaled)$`scaled:center`[input$selectOut]
+       #descaled coefficient
+       KK=Ky*K/Kx
+       BB=By+Ky*B-K*Bx*Ky/Kx
+       ab.pca=c(Intercept=BB,Gradient=KK)
+       #descale ab.pca
+       #ab.pca=c(Intercept=B*ab.pca[2]+ab.pca[1],Gradient=K*ab.pca[2])
+       predicted.pca=ab.pca[1]+ab.pca[2]*dat_scaled[,input$selectInp]  # no scaling
+       #predicted.pca=(predicted.pca-B)/K    #descale
        pca.cc=ccf(dat[,input$selectOut],predicted.pca,lag.max = 0,plot = F)$acf[[1]]
        
-       
+       ab.avg=apply(rbind(ab,ab.inv,ab.pca),2,FUN=mean)
        
        if(sd(lm$residuals) < 1.5*sd(lm.inv$residuals)) {
          #predicted=predicted
@@ -351,11 +365,13 @@ server <- function(input, output,session) {
        cc=pca.cc
        predicted=predicted.pca
        
-       print(paste("LM    :",cls,"="));print(ab);print(mad(lm$residuals))
+       print(paste("LM    :",cls,"=",print(ab)));#print(mad(lm$residuals))
        #print(capture.output(lm))
-       print(paste("LM.INV:",cls,"="));print(ab.inv);print(mad(lm.inv$residuals))
+       print(paste("LM.INV:",cls,"=",print(ab.inv)));#print(mad(lm.inv$residuals))
        #print(capture.output(lm.inv))
-       print(paste("LM.ODR:",cls,'='));print(ab.pca);print(mad(predicted.pca-dat[,input$selectOut]))
+       print(paste("LM.PCA:",cls,'=',print(ab.pca)));#print(mad(predicted.pca-dat[,input$selectOut]))
+       
+       print(paste("LM.AVG:",cls,'=',print(ab.avg)));
      }
      #names(dlms) <- unique(mcres$VVV12)
 
@@ -378,11 +394,15 @@ server <- function(input, output,session) {
      par(lwd=2,lty="dashed")
      abline(ab.pca,col=pal[input$clsid])
      
-     par(lwd=4,lty="dotted")
+     par(lwd=4,lty="dotted") 
      abline(ab.inv,col=pal[input$clsid])
+     
+     par(lwd=2,lty="longdash") 
+     abline(ab.avg,col=pal[input$clsid])
      
      par(lwd=1,lty="solid")
      #points(y=mcres_2[,input$selectOut],x=mcres_2[,input$selectInp],col=pal[mcres_2$VVV12]);
+     #points(y=mcres_2[,input$selectOut],x=mcres_2[,input$selectInp],col=colors[2]);
      #contour(k,nlevels=5,col='gray50',lwd = 2,add=T,drawlabels = F)
      #print(title)
      
