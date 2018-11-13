@@ -14,6 +14,7 @@ library(stats)
 library(DT)
 library(MASS)
 library(MethComp)
+library(e1071)
 
 # Define UI for application that draws a histogram
 ui <- fluidPage(
@@ -97,7 +98,7 @@ read_las <- function(filename,
   lasfile <- file(filename, open="r")
   
   ### 1. read header of the las file (LAS files have all the headers within first 100 lines)
-  headerlines <- readLines(con = lasfile, n = 100L, ok = TRUE, skipNul = TRUE)
+  headerlines <- readLines(con = lasfile, n = 1000L, ok = TRUE, skipNul = TRUE)
   
   # 1.a get the well name
   #pattern <- paste("WELL *\\.", "WELL\\.", sep = "|")
@@ -158,12 +159,65 @@ tls_pca <- function (x, y) {
   return(c(Intercept = b0,Gradient = beta))
 }
 
-getTranspRamp <- function(color = NULL ,grades = 0.5,max_alpha=0.5) {
+descaleAB <- function (ab,dat_scaled,inout) {
+  K=ab[2]
+  B=ab[1]
+  Kx=attributes(dat_scaled)$`scaled:scale`[inout[1]]
+  Bx=attributes(dat_scaled)$`scaled:center`[inout[1]]
+  Ky=attributes(dat_scaled)$`scaled:scale`[inout[2]]
+  By=attributes(dat_scaled)$`scaled:center`[inout[2]]
+  #descaled coefficient
+  KK=Ky*K/Kx
+  BB=By+Ky*B-K*Bx*Ky/Kx
+  ab=c(Intercept=BB,Gradient=KK)
+  return(ab)
+}
+
+getModel <- function(dat,inout=c(1,2),type='glm',scale=TRUE) {
+  dat_scaled=scale(dat)
+  measured=dat[,inout[2]]
+  if(type=='pca') ab=tls_pca(dat_scaled[,inout[1]],dat_scaled[,inout[2]])
+  else if(type=='glm') ab=glm(dat_scaled[,inout[2]]~dat_scaled[,inout[1]])$coefficients
+  else if(type=='lqs') ab=lqs(dat_scaled[,inout[2]]~dat_scaled[,inout[1]])$coefficients
+  else if(type=='inv') {
+    ab=glm(dat_scaled[,inout[1]]~dat_scaled[,inout[2]])$coefficients
+    ab=c(Intercept = -ab[1]/ab[2],Gradient = 1/ab[2])
+  }
+  if(type =='avg') {
+    ab1=tls_pca(dat_scaled[,inout[1]],dat_scaled[,inout[2]])
+    ab2=glm(dat_scaled[,inout[2]]~dat_scaled[,inout[1]])$coefficients
+    ab3=glm(dat_scaled[,inout[1]]~dat_scaled[,inout[2]])$coefficients
+    ab3=c(Intercept = -ab3[1]/ab3[2],Gradient = 1/ab3[2])
+    ab=apply(rbind(ab2,ab3),2,FUN=mean)
+  }
+  #descale ab
+  ab = descaleAB(ab = ab,dat_scaled = dat_scaled,inout = inout)
+  
+  predicted=ab[1]+ab[2]*dat[,inout[1]]  # no scaling
+  resid=predicted-measured
+  #qcf=sd(resid)
+  qcf=density(resid)$bw
+  #predicted.pca=(predicted.pca-B)/K    #descale
+  cc=ccf(measured,predicted,lag.max = 0,plot = F)$acf[[1]]
+  
+  return(list(ab=ab,predicted=predicted,resid=resid,cc=cc,qcf=qcf))
+}
+
+setPaletteTransp <- function(colors = NULL ,alpha = 0.5) {
+  if(is.null(colors)) return(NULL)
+  
+  colors = apply(sapply(colors, col2rgb)/255, 2, 
+                 function(x) rgb(x[1], x[2], x[3], alpha=alpha)) 
+  #dbgmes("transpal=",colors)
+  return(colors)
+}
+
+getTranspRamp <- function(color = NULL ,grades = 0.5,alphaRange=c(0.1,0.5)) {
   if(is.null(colors)) return(NULL)
   
   #browser()
   colors=rep(color,grades)
-  grades=seq(0,max_alpha,length.out = grades)
+  grades=seq(alphaRange[1],alphaRange[2],length.out = grades)
   colors=sapply(colors, col2rgb)/255
   colors = sapply(seq_along(colors[1,]),  
                   function(x) rgb(colors[1,x], colors[2,x], colors[3,x], alpha=grades[x]))  
@@ -289,10 +343,12 @@ server <- function(input, output,session) {
      if(is.null(myReactives$mc) ||
         length(myReactives$data)<2
         || is.null(input$selectInp) || is.null(input$selectOut)
-        || input$selectInp=="" || input$selectOut=="") {
+        || input$selectInp=="" || input$selectOut==""
+        || !(input$selectInp %in% colnames(myReactives$data) && input$selectOut %in% colnames(myReactives$data)) ) {
        plotError("No Data")
        return(NULL)
      }
+     
      #split.screen(c(2,2))
      #screen(1);par(pch=16)
      par(mfrow = c(2,2))
@@ -319,62 +375,26 @@ server <- function(input, output,session) {
      cls = input$clsid
      {
        dat = mcres[mcres$VVV12 == cls,]
-       lm=glm(dat[,input$selectOut]~dat[,input$selectInp])#,family = Gamma)
-       #ab=lm$coefficients
-       ab=c(Intercept = lm$coefficients[1],Gradient = lm$coefficients[2])
-       predicted=ab[1]+ab[2]*dat[,input$selectInp]
-       lm$cc=ccf(dat[,input$selectOut],predicted,lag.max = 0,plot = F)$acf[[1]]
-       
-       lm.inv=glm(dat[,input$selectInp]~dat[,input$selectOut])#,family = Gamma)
-       ab.inv=c(Intercept = -lm.inv$coefficients[1]/lm.inv$coefficients[2],Gradient = 1/lm.inv$coefficients[2])
-       predicted.inv=ab.inv[1]+ab.inv[2]*dat[,input$selectInp]
-       lm.inv$cc=ccf(dat[,input$selectOut],predicted.inv,lag.max = 0,plot = F)$acf[[1]]
-       
-       #lm.odr=Deming(dat[,input$selectInp],dat[,input$selectOut])
-       #ab.odr=c(lm.odr[1],lm.odr[2])
-       #predicted.odr=ab.odr[1]+ab.odr[2]*dat[,input$selectInp]
-       #odr.cc=ccf(dat[,input$selectOut],predicted.odr,lag.max = 0,plot = F)$acf[[1]]
-       #browser()
-       dat_scaled=scale(dat)
-       ab.pca=tls_pca(dat_scaled[,input$selectInp],dat_scaled[,input$selectOut])
-       K=ab.pca[2]
-       B=ab.pca[1]
-       Kx=attributes(dat_scaled)$`scaled:scale`[input$selectInp]
-       Bx=attributes(dat_scaled)$`scaled:center`[input$selectInp]
-       Ky=attributes(dat_scaled)$`scaled:scale`[input$selectOut]
-       By=attributes(dat_scaled)$`scaled:center`[input$selectOut]
-       #descaled coefficient
-       KK=Ky*K/Kx
-       BB=By+Ky*B-K*Bx*Ky/Kx
-       ab.pca=c(Intercept=BB,Gradient=KK)
-       #descale ab.pca
-       #ab.pca=c(Intercept=B*ab.pca[2]+ab.pca[1],Gradient=K*ab.pca[2])
-       predicted.pca=ab.pca[1]+ab.pca[2]*dat[,input$selectInp]  # no scaling
-       #predicted.pca=(predicted.pca-B)/K    #descale
-       pca.cc=ccf(dat[,input$selectOut],predicted.pca,lag.max = 0,plot = F)$acf[[1]]
-       
-       ab.avg=apply(rbind(ab,ab.inv,ab.pca),2,FUN=mean)
-       
-       if(sd(lm$residuals) < 1.5*sd(lm.inv$residuals)) {
-         #predicted=predicted
-         cc=lm$cc
-       } else {
-         predicted=predicted.inv
-         cc=lm.inv$cc
-       }
-       cc=pca.cc
-       predicted=predicted.pca
-       
-       print(paste("LM    :",cls,"=",print(ab)));#print(mad(lm$residuals))
-       #print(capture.output(lm))
-       print(paste("LM.INV:",cls,"=",print(ab.inv)));#print(mad(lm.inv$residuals))
-       #print(capture.output(lm.inv))
-       print(paste("LM.PCA:",cls,'=',print(ab.pca)));#print(mad(predicted.pca-dat[,input$selectOut]))
-       
-       print(paste("LM.AVG:",cls,'=',print(ab.avg)));
-     }
-     #names(dlms) <- unique(mcres$VVV12)
+       mod.pca = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'pca',scale=T)
+       mod.glm = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'glm',scale=T)
+       mod.inv = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'inv',scale=T)
+       mod.avg = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'avg',scale=T)
+       mod.lqs = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'lqs',scale=T)
+       #mod.svm = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'svm',scale=T)
 
+       ab=mod.avg$ab
+       cc=mod.avg$cc
+       measured=dat[,input$selectOut]
+       predicted=mod.pca$predicted
+       
+       lms<-data.frame(QCF=c(mod.glm$qcf,mod.inv$qcf,mod.avg$qcf,mod.pca$qcf,mod.lqs$qcf),
+                  CC=c(mod.glm$cc,mod.inv$cc,mod.avg$cc,mod.pca$cc,mod.lqs$cc),
+                  rbind(mod.glm$ab,mod.inv$ab,mod.avg$ab,mod.pca$ab,mod.lqs$ab))
+       rownames(lms) <- c('LM.glm','LM.inv','LM.avg','LM.pca','LM.lqs')
+     }
+     #browser()
+     lms <- lms[with(lms,order(QCF)),]
+     print(lms)
      #plot single class ####
      mcres_2=mcres[mcres$VVV12 == input$clsid,]
      k <- kde2d(y = mcres_2[,input$selectOut],x = mcres_2[,input$selectInp])
@@ -383,33 +403,94 @@ server <- function(input, output,session) {
      par(mfg = c(1,2),pch=16)
      #lm=dlms[[paste(input$clsid)]]
      title = paste("CC for class",input$clsid,'=',prettyNum(cc))
-     plot(mcres[,input$selectOut]~mcres[,input$selectInp],col='grey80',main = getFormStr(lm));
+     plot(mcres[,input$selectOut]~mcres[,input$selectInp],col='grey80',
+          main = paste(rownames(lms)[1],'\'s QCF:',prettyNum(lms$QCF[1])));
      #browser()
-     colors=getTranspRamp(pal[input$clsid],grades = 5,max_alpha = 0.7)
-     .filled.contour(x = k$x,y = k$y,z = k$z,levels=seq(min(k$z),max(k$z),length.out = 5),col=colors)
+     colors=getTranspRamp(pal[input$clsid],grades = 5,alphaRange = c(0.1,0.7))
+     #.filled.contour(x = k$x,y = k$y,z = k$z,levels=seq(min(k$z),max(k$z),length.out = 5),col=colors)
+     #contour(k,col=pal[mcres_2$VVV12],add=TRUE)
 
      #points(y=mcres[,input$selectOut],x=mcres[,input$selectInp],col='grey80');
-     abline(ab,col=pal[input$clsid])
+     range = rbind(range(mcres[,input$selectOut]),range(mcres[,input$selectInp]))
+     #ymax = max(mcres[,input$selectOut])
+
+     getTxtLoc <- function (ab,ranges, margin = 0.05) {
+       # get the plot aspect ratio as 'asp'
+       w <- diff(par("usr")[1:2]) / par("pin")[1] # plot units per inch horizontal axis
+       h <- diff(par("usr")[3:4]) / par("pin")[2] # plot units per inch vertical axis
+       asp <- w/h
+       txt.y=ranges[1,2]-(ranges[1,2]-ranges[1,1])*margin
+       txt.x=(txt.y-ab[1])/ab[2]
+       txt.rot=180/pi*atan(ab[2]*asp)
+       if(txt.x>ranges[2,2]) {
+         txt.x=ranges[2,2]-(ranges[2,2]-ranges[2,1])*margin*asp
+         txt.y=txt.x*ab[2]+ab[1]
+       } else if(txt.x<ranges[2,1]) {
+         txt.x=ranges[2,1]+(ranges[2,2]-ranges[2,1])*margin*asp
+         txt.y=txt.x*ab[2]+ab[1]
+       }
+       return(list(x=txt.x,y=txt.y,srt=txt.rot))
+     }
      
-     par(lwd=2,lty="dashed")
-     abline(ab.pca,col=pal[input$clsid])
      
-     par(lwd=4,lty="dotted") 
-     abline(ab.inv,col=pal[input$clsid])
-     
+     #plot glm line
+     abline(mod.glm$ab,col=pal[input$clsid])
+     txt=getTxtLoc(mod.glm$ab,range)
+     text(txt$x,txt$y,"glm",srt=txt$srt,pos=3,col=pal[input$clsid])
+     #plot inverse glm line
+     abline(mod.inv$ab,col=pal[input$clsid])
+     txt=getTxtLoc(mod.inv$ab,range)
+     text(txt$x,txt$y,"inv",srt=txt$srt,pos=3,col=pal[input$clsid])
+     #plot PCA (ortho) line
+     par(lwd=2,lty="dotted")
+     abline(mod.pca$ab,col=pal[input$clsid])
+     txt=getTxtLoc(mod.pca$ab,range)
+     text(txt$x,txt$y,"pca",srt=txt$srt,pos=3,col=pal[input$clsid])
+     #plot glm-inv averaged  line
      par(lwd=2,lty="longdash") 
-     abline(ab.avg,col=pal[input$clsid])
+     abline(mod.avg$ab,col=pal[input$clsid])
+     txt=getTxtLoc(mod.avg$ab,range)
+     text(txt$x,txt$y,"avg",srt=txt$srt,pos=3,col=pal[input$clsid])
+
+     #plot glm-inv averaged  line
+     par(lwd=2,lty="dashed") 
+     abline(mod.lqs$ab,col=pal[input$clsid])
+     txt=getTxtLoc(mod.lqs$ab,range)
+     text(txt$x,txt$y,"lqs",srt=txt$srt,pos=3,col=pal[input$clsid])
+     
      
      par(lwd=1,lty="solid")
      #points(y=mcres_2[,input$selectOut],x=mcres_2[,input$selectInp],col=pal[mcres_2$VVV12]);
-     #points(y=mcres_2[,input$selectOut],x=mcres_2[,input$selectInp],col=colors[2]);
-     #contour(k,nlevels=5,col='gray50',lwd = 2,add=T,drawlabels = F)
+     #points(y=mcres_2[,input$selectOut],x=mcres_2[,input$selectInp],col=colors[1]);
+     contour(k,nlevels=5,col=pal[mcres_2$VVV12],lwd = 1,add=T,drawlabels = F)
      #print(title)
+     
+     # select best fit 1) by sd(resid)?
      
      #plot LM residuals ####
      #screen(3);par(pch=16)
      par(mfg = c(2,1),pch=16)
-     plot(lm.inv,which=1)
+     #plot(lm.inv,which=3)
+     cols <- c('black','blue','red','green')
+     cols = setPaletteTransp(colors = cols,alpha = 0.1)
+     names(cols) <- c('glm','inv','avg','pca')
+     plot(mod.inv$resid~mod.inv$predicted,col=cols['inv'])
+     points(mod.avg$resid ~ mod.avg$predicted, col=cols['avg'])
+     points(mod.pca$resid ~ mod.pca$predicted, col=cols['pca'])
+     points(mod.glm$resid ~ mod.glm$predicted, col=cols['glm'])
+     cols = setPaletteTransp(colors = cols,alpha = 1)
+     resRange = c(range(mod.inv$predicted),range(mod.inv$resid))
+     k <- kde2d(x = mod.glm$predicted,y = mod.glm$resid,lims = resRange)
+     contour(k,nlevels=5,col=cols['glm'],lwd = 1,add=T,drawlabels = F)
+     k <- kde2d(x = mod.inv$predicted,y = mod.inv$resid,lims = resRange)
+     contour(k,nlevels=5,col=cols['inv'],lwd = 1,add=T,drawlabels = F)
+     k <- kde2d(x = mod.avg$predicted,y = mod.avg$resid,lims = resRange)
+     contour(k,nlevels=5,col=cols['avg'],lwd = 1,add=T,drawlabels = F)
+     k <- kde2d(x = mod.pca$predicted,y = mod.pca$resid,lims = resRange)
+     contour(k,nlevels=5,col=cols['pca'],lwd = 1,add=T,drawlabels = F)
+     legend("topright",inset = c(0.01,0.01),
+            legend = names(cols) ,
+            col = cols,pch = 16)
      #browser()
      
      #plot LM xplot ####
