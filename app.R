@@ -43,6 +43,10 @@ ui <- fluidPage(
           buttonLabel = "Открыть..."
         ),
         dataTableOutput('datasetDT'),
+        div(style=paste0("display: table-cell;vertical-align:top; width: 150px;"),actionButton("runCalc",label = 'Рассчитать',icon = icon("play-circle"))),
+        #div(style=paste0("display: table-cell;vertical-align:top; width: 10px;"),HTML("<br>")),
+        div(style=paste0("display: table-cell;vertical-align:top; width: 120px;"),downloadButton('downloadDataset', 'Save dataset')),
+        div(style=paste0("display: vertical-align:top; width: 20px;"),HTML("<br>")),
         div(style=paste0("display: table-cell;vertical-align:top; width: 120px;"),selectInput("selectInp", "Исходный",choices = NULL)),
         div(style=paste0("display: table-cell;vertical-align:top; width: 20px;"),HTML("<br>")),
         div(style=paste0("display: table-cell;vertical-align:top; width: 150px;"),selectInput("selectOut", "Прогнозный",choices = NULL)),
@@ -50,14 +54,12 @@ ui <- fluidPage(
         div(style=paste0("display: table-cell;vertical-align:top; width: 150px;"),checkboxInput('logInp','log(1+x)',value = T)),
         div(style=paste0("display: table-cell;vertical-align:top; width: 20px;"),HTML("<br>")),
         div(style=paste0("display: table-cell;vertical-align:top; width: 150px;"),checkboxInput('logOut','log(1+x)', value = T)),
-        div(style=paste0("display: table-cell;vertical-align:top; width: 150px;"),actionButton("runCalc",label = 'Рассчитать',icon = icon("play-circle"))),
-        #div(style=paste0("display: table-cell;vertical-align:top; width: 10px;"),HTML("<br>")),
-        div(style=paste0("display: table-cell;vertical-align:top; width: 120px;"),downloadButton('downloadDataset', 'Save dataset'))
-        #div(style=paste0("display: vertical-align:top; width: 20px;"),HTML("<br>")),
+        div(style=paste0("display: vertical-align:top; width: 20px;"),HTML("<br>"))
       ),
       # Show a plot of the generated distribution
       mainPanel(
-         plotOutput("distPlot",height = "800px")
+         plotOutput("distPlot",height = "800px"),
+         selectInput("selectXP", "Прогнозный",choices = c('glm','inv','avg','pca','lqs'))
       )
    )
 )
@@ -173,7 +175,7 @@ descaleAB <- function (ab,dat_scaled,inout) {
   return(ab)
 }
 
-getModel <- function(dat,inout=c(1,2),type='glm',scale=TRUE) {
+getModel <- function(dat,inout=c(1,2),type='glm',scale=TRUE, logOut=FALSE) {
   dat_scaled=scale(dat)
   measured=dat[,inout[2]]
   if(type=='pca') ab=tls_pca(dat_scaled[,inout[1]],dat_scaled[,inout[2]])
@@ -195,11 +197,15 @@ getModel <- function(dat,inout=c(1,2),type='glm',scale=TRUE) {
   
   predicted=ab[1]+ab[2]*dat[,inout[1]]  # no scaling
   resid=predicted-measured
-  #qcf=sd(resid)
-  qcf=density(resid)$bw
+  qcf0=sd(resid)
+  qcf1=density(resid)$bw
+  qcf=abs(lm(resid~measured)$coefficients[2])
+  print(c(qcf0,qcf1,qcf))
   #predicted.pca=(predicted.pca-B)/K    #descale
   cc=ccf(measured,predicted,lag.max = 0,plot = F)$acf[[1]]
   
+  if(logOut) predicted=exp(exp(predicted)-1)
+  else predicted = exp(predicted)
   return(list(ab=ab,predicted=predicted,resid=resid,cc=cc,qcf=qcf))
 }
 
@@ -249,7 +255,7 @@ server <- function(input, output,session) {
                                       file = fname,
                                       sep = '    \t',
                                       dec = '.',
-                                      row.names = F,
+                                      row.names = T,
                                       col.names = T) 
                    , TRUE)
        if(class(save)=="try-error")
@@ -286,14 +292,17 @@ server <- function(input, output,session) {
      updateSelectInput(session = session,"selectOut",choices = parList,selected = selOut)
      #q = myReactives$data[,c('DEPT','DT','dCALI','SP','SN')]
      #print(parList)
-     q = myReactives$data[,c('DEPT',parList)]
+     q = myReactives$data[,c(parList)]
+     rownames(q) <- as.character(myReactives$data$DEPT)
+     #colnames(q)[1]='DPH0'
      q = q[complete.cases(q),]
      #browser()
      #q$dCALI = log10(q$dCALI)
      qlog = log(q)
-     qlog$DEPT=q$DEPT
+     #qlog$DPH0=q$DPH0
 
      qlog = qlog[complete.cases(qlog),]
+     print(c("qlog=",colnames(qlog)))
      #plot(qlog[-1])
      #cls = 4
      #dat = mcres[mcres$VVV12 == cls,]
@@ -301,7 +310,7 @@ server <- function(input, output,session) {
      #dlm = lm(dat$DT~dat$SN)
      #browser()
      #par(new=T,mfrow=c(2,2),pch=16)
-     if(dim(qlog)[1]<3) return(NULL)
+     if(dim(qlog)[1]<2) return(NULL)
      myReactives$qlog = qlog
      
      #myReactives$mbic = Mclust((myReactives$qlog[-1]),G=seq(2,3,3),modelNames = c('EEI','VVV','VEE'))
@@ -310,7 +319,7 @@ server <- function(input, output,session) {
    #### Calc clusters ####
    #observe({
    observeEvent(input$runCalc,{
-     if(is.null(myReactives$qlog) || length(myReactives$qlog)<3
+     if(is.null(myReactives$qlog) || length(myReactives$qlog)<2
         || is.null(input$selectInp) || is.null(input$selectOut)
         || input$selectInp=="" || input$selectOut=="") {
        #plotError("No Data")
@@ -319,20 +328,21 @@ server <- function(input, output,session) {
      #browser()
      showModDial()
      qlog = myReactives$qlog
-     if(input$logInp) qlog[,input$selectInp] = log1p(qlog[,input$selectInp])
-     if(input$logOut) qlog[,input$selectOut] = log1p(qlog[,input$selectOut])
+     # if(input$logInp) qlog[,input$selectInp] = log1p(qlog[,input$selectInp])
+     # if(input$logOut) qlog[,input$selectOut] = log1p(qlog[,input$selectOut])
      # qlog$DT = log1p(qlog$DT)
      # qlog$SN = log1p(qlog$SN)
      
      qlog = qlog[complete.cases(qlog),]
-     if(dim(qlog)[1]<3) return(NULL)
+     if(dim(qlog)[1]<2) return(NULL)
      print(dim(qlog))
      #browser();
-     myReactives$mc = Mclust((qlog[-1]),G=input$cls,modelNames = 'VVV')
+     myReactives$mc = Mclust(qlog,G=input$cls,modelNames = 'VVV')
      if(is.null(myReactives$mc)) {
        removeModal()
        return(NULL)
      }
+     #print(c("qlog=",colnames(qlog)))
      myReactives$mcres = cbind(qlog,VVV12 = predict(myReactives$mc)$classification)
      updateSliderInput(session = session,inputId = 'clsid',min = 1,max=input$cls,value = min(input$clsid,input$cls))
      removeModal()
@@ -340,15 +350,20 @@ server <- function(input, output,session) {
    #### Plot data ####
    output$distPlot <- renderPlot({
       # generate bins based on input$bins from ui.R
+     #print(input$selectInp)
+     #print(input$selectOut)
+     #print(colnames(myReactives$data))
+     #print(colnames(myReactives$mc$data))
+     #print(myReactives$mc$parametrs)
+     #print(all(colnames(myReactives$mc$data) %in% colnames(myReactives$data)))
      if(is.null(myReactives$mc) ||
         length(myReactives$data)<2
         || is.null(input$selectInp) || is.null(input$selectOut)
         || input$selectInp=="" || input$selectOut==""
-        || !(input$selectInp %in% colnames(myReactives$data) && input$selectOut %in% colnames(myReactives$data)) ) {
-       plotError("No Data")
+        || !(input$selectInp %in% colnames(myReactives$mc$data) && input$selectOut %in% colnames(myReactives$mc$data)) ) {
+       plotError("Выборка изменена, либо расчет не выполнен")
        return(NULL)
      }
-     
      #split.screen(c(2,2))
      #screen(1);par(pch=16)
      par(mfrow = c(2,2))
@@ -361,12 +376,16 @@ server <- function(input, output,session) {
      #par(pch=16)
      #plot(mbic,what = "classification")
      mcres = myReactives$mcres
+     if(input$logInp) mcres[,input$selectInp] = log1p(mcres[,input$selectInp])
+     if(input$logOut) mcres[,input$selectOut] = log1p(mcres[,input$selectOut])
+     mcres = mcres[complete.cases(mcres),]
      #mcres = cbind(qlog,VVV12 = predict(mbic)$classification)
      dlms=list()
      pal=mclust.options("classPlotColors")
      #screen(1);par(pch=16)
      par(mfg = c(1,1),pch=16)
      #plot all classes ####
+     #browser()
      plot(mcres[,input$selectOut]~mcres[,input$selectInp],col=pal[mcres$VVV12]);
      classes= sort(unique(mcres$VVV12))
      legend("topright",inset = c(0.01,0.01),legend = classes ,col = pal[classes],pch = 16)
@@ -375,17 +394,16 @@ server <- function(input, output,session) {
      cls = input$clsid
      {
        dat = mcres[mcres$VVV12 == cls,]
-       mod.pca = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'pca',scale=T)
-       mod.glm = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'glm',scale=T)
-       mod.inv = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'inv',scale=T)
-       mod.avg = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'avg',scale=T)
-       mod.lqs = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'lqs',scale=T)
+       mod.pca = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'pca',scale=T,logOut = input$logOut)
+       mod.glm = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'glm',scale=T,logOut = input$logOut)
+       mod.inv = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'inv',scale=T,logOut = input$logOut)
+       mod.avg = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'avg',scale=T,logOut = input$logOut)
+       mod.lqs = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'lqs',scale=T,logOut = input$logOut)
        #mod.svm = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'svm',scale=T)
 
-       ab=mod.avg$ab
-       cc=mod.avg$cc
        measured=dat[,input$selectOut]
-       predicted=mod.pca$predicted
+       if(input$logInp) measured=exp(exp(measured)-1)
+       else measured=exp(measured)
        
        lms<-data.frame(QCF=c(mod.glm$qcf,mod.inv$qcf,mod.avg$qcf,mod.pca$qcf,mod.lqs$qcf),
                   CC=c(mod.glm$cc,mod.inv$cc,mod.avg$cc,mod.pca$cc,mod.lqs$cc),
@@ -402,9 +420,8 @@ server <- function(input, output,session) {
      #screen(2);par(pch=16)
      par(mfg = c(1,2),pch=16)
      #lm=dlms[[paste(input$clsid)]]
-     title = paste("CC for class",input$clsid,'=',prettyNum(cc))
      plot(mcres[,input$selectOut]~mcres[,input$selectInp],col='grey80',
-          main = paste(rownames(lms)[1],'\'s QCF:',prettyNum(lms$QCF[1])));
+          main = paste0(rownames(lms)[1],'\'s QCF: ',prettyNum(lms$QCF[1])));
      #browser()
      colors=getTranspRamp(pal[input$clsid],grades = 5,alphaRange = c(0.1,0.7))
      #.filled.contour(x = k$x,y = k$y,z = k$z,levels=seq(min(k$z),max(k$z),length.out = 5),col=colors)
@@ -469,38 +486,67 @@ server <- function(input, output,session) {
      
      #plot LM residuals ####
      #screen(3);par(pch=16)
-     par(mfg = c(2,1),pch=16)
+     par(mfg = c(2,1),pch=16,lwd = 1)
      #plot(lm.inv,which=3)
-     cols <- c('black','blue','red','green')
+     cols <- c('black','blue','red','green','magenta')
      cols = setPaletteTransp(colors = cols,alpha = 0.1)
-     names(cols) <- c('glm','inv','avg','pca')
-     plot(mod.inv$resid~mod.inv$predicted,col=cols['inv'])
-     points(mod.avg$resid ~ mod.avg$predicted, col=cols['avg'])
-     points(mod.pca$resid ~ mod.pca$predicted, col=cols['pca'])
-     points(mod.glm$resid ~ mod.glm$predicted, col=cols['glm'])
+     names(cols) <- c('glm','inv','avg','pca','lqs')
+       plot(mod.inv$resid ~ measured, col=cols['inv'])
+     points(mod.avg$resid ~ measured, col=cols['avg'])
+     points(mod.pca$resid ~ measured, col=cols['pca'])
+     points(mod.glm$resid ~ measured, col=cols['glm'])
      cols = setPaletteTransp(colors = cols,alpha = 1)
-     resRange = c(range(mod.inv$predicted),range(mod.inv$resid))
-     k <- kde2d(x = mod.glm$predicted,y = mod.glm$resid,lims = resRange)
-     contour(k,nlevels=5,col=cols['glm'],lwd = 1,add=T,drawlabels = F)
-     k <- kde2d(x = mod.inv$predicted,y = mod.inv$resid,lims = resRange)
-     contour(k,nlevels=5,col=cols['inv'],lwd = 1,add=T,drawlabels = F)
-     k <- kde2d(x = mod.avg$predicted,y = mod.avg$resid,lims = resRange)
-     contour(k,nlevels=5,col=cols['avg'],lwd = 1,add=T,drawlabels = F)
-     k <- kde2d(x = mod.pca$predicted,y = mod.pca$resid,lims = resRange)
-     contour(k,nlevels=5,col=cols['pca'],lwd = 1,add=T,drawlabels = F)
+     resRange = c(range(measured),range(mod.inv$resid))
+     k <- kde2d(x = measured,y = mod.glm$resid,lims = resRange);contour(k,nlevels=5,col=cols['glm'],add=T,drawlabels = F)
+     k <- kde2d(x = measured,y = mod.inv$resid,lims = resRange);contour(k,nlevels=5,col=cols['inv'],add=T,drawlabels = F)
+     k <- kde2d(x = measured,y = mod.avg$resid,lims = resRange);contour(k,nlevels=5,col=cols['avg'],add=T,drawlabels = F)
+     k <- kde2d(x = measured,y = mod.pca$resid,lims = resRange);contour(k,nlevels=5,col=cols['pca'],add=T,drawlabels = F)
+     abline(lm(mod.glm$resid~measured)$coefficients,col=cols['glm'])
+     abline(lm(mod.inv$resid~measured)$coefficients,col=cols['inv'])
+     abline(lm(mod.avg$resid~measured)$coefficients,col=cols['avg'])
+     abline(lm(mod.pca$resid~measured)$coefficients,col=cols['pca'])
+     #abline(c(0,0),col='red')
      legend("topright",inset = c(0.01,0.01),
             legend = names(cols) ,
             col = cols,pch = 16)
      #browser()
      
+     ab=mod.inv$ab
+     cc=mod.inv$cc
+     predicted=mod.inv$predicted
+     
+     mod=switch(input$selectXP,
+               glm=mod.glm,
+               inv=mod.inv,
+               avg=mod.avg,
+               pca=mod.pca,
+               lqs=mod.lqs)
+     
+     ab=mod$ab
+     cc=mod$cc
+     predicted=mod$predicted
      #plot LM xplot ####
      #screen(4);par(pch=16)
      par(mfg = c(2,2),pch=16)
-     if(input$logInp) measured=exp(exp(predicted)-1)
-     else measured=exp(predicted)
-     if(input$logOut) predicted=exp(exp(mcres_2[,input$selectOut])-1)
-     else predicted = exp(mcres_2[,input$selectOut])
-     plot(predicted~measured,col='grey30',main=title)
+     #browser()
+     ranges<-range(measured,predicted)
+     title = paste("CC for class",input$clsid,'=',prettyNum(cc))
+     cols = setPaletteTransp(colors = cols,alpha = 0.2)
+     plot(mod.glm$predicted~measured,col=cols['glm'],main=title,xlim=ranges,ylim=ranges)
+     points(mod.inv$predicted~measured,col=cols['inv'],main=title,xlim=ranges,ylim=ranges)
+     points(mod.avg$predicted~measured,col=cols['avg'],main=title,xlim=ranges,ylim=ranges)
+     points(mod.pca$predicted~measured,col=cols['pca'],main=title,xlim=ranges,ylim=ranges)
+     #plot(mod.lqs$predicted~measured,col=cols['lqs'],main=title,xlim=ranges,ylim=ranges)
+     #plot(predicted~measured,col='grey30',main=title,xlim=ranges,ylim=ranges)
+     abline(c(0,1),col='red')
+     cols = setPaletteTransp(colors = cols,alpha = 1)
+     k <- kde2d(x = measured,y = mod.glm$predicted,lims = rep(ranges,2));contour(k,nlevels=5,col=cols['glm'],add=T,drawlabels = F)
+     k <- kde2d(x = measured,y = mod.inv$predicted,lims = rep(ranges,2));contour(k,nlevels=5,col=cols['inv'],add=T,drawlabels = F)
+     k <- kde2d(x = measured,y = mod.avg$predicted,lims = rep(ranges,2));contour(k,nlevels=5,col=cols['avg'],add=T,drawlabels = F)
+     k <- kde2d(x = measured,y = mod.pca$predicted,lims = rep(ranges,2));contour(k,nlevels=5,col=cols['pca'],add=T,drawlabels = F)
+     legend("topright",inset = c(0.01,0.01),
+            legend = names(cols) ,
+            col = cols,pch = 16)
      #abline(lm(mcres_2$SN~predict(lm)),col='black')
      #split.screen(c(2,2))
      #screen(1)
