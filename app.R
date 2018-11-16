@@ -178,9 +178,11 @@ descaleAB <- function (ab,dat_scaled,inout) {
 getModel <- function(dat,inout=c(1,2),type='glm',scale=TRUE, logOut=FALSE) {
   dat_scaled=scale(dat)
   measured=dat[,inout[2]]
+  #browser()
   if(type=='pca') ab=tls_pca(dat_scaled[,inout[1]],dat_scaled[,inout[2]])
   else if(type=='glm') ab=glm(dat_scaled[,inout[2]]~dat_scaled[,inout[1]])$coefficients
   else if(type=='lqs') ab=lqs(dat_scaled[,inout[2]]~dat_scaled[,inout[1]])$coefficients
+  else if(type=='rlm') ab=rlm(dat_scaled[,inout[2]]~dat_scaled[,inout[1]])$coefficients
   else if(type=='inv') {
     ab=glm(dat_scaled[,inout[1]]~dat_scaled[,inout[2]])$coefficients
     ab=c(Intercept = -ab[1]/ab[2],Gradient = 1/ab[2])
@@ -197,10 +199,19 @@ getModel <- function(dat,inout=c(1,2),type='glm',scale=TRUE, logOut=FALSE) {
   
   predicted=ab[1]+ab[2]*dat[,inout[1]]  # no scaling
   resid=predicted-measured
+  #estimate prob.densities
+  denm=density(measured)
+  denp=density(predicted)
+  denr=density(resid)
+  # estimating QC factors
   qcf0=sd(resid)
-  qcf1=density(resid)$bw
-  qcf=abs(lm(resid~measured)$coefficients[2])
-  print(c(qcf0,qcf1,qcf))
+  qcf1=denr$bw
+  #browser()
+  qcf2=abs(sum(denp$y-denm$y)/max(denm$y))
+  #qcf2=abs(sum(denp$y/denm$y))
+  qcf3=abs(lm(resid~measured)$coefficients[2])
+  qcf=qcf2
+  #print(c(qcf0,qcf1,qcf))
   #predicted.pca=(predicted.pca-B)/K    #descale
   cc=ccf(measured,predicted,lag.max = 0,plot = F)$acf[[1]]
   
@@ -288,6 +299,7 @@ server <- function(input, output,session) {
      selOut=input$selectOut
      if(!(selInp %in% parList)) selInp=NULL
      if(!(selOut %in% parList)) selOut=NULL
+     #if(selOut==selInp) {}
      updateSelectInput(session = session,"selectInp",choices = parList,selected = selInp)
      updateSelectInput(session = session,"selectOut",choices = parList,selected = selOut)
      #q = myReactives$data[,c('DEPT','DT','dCALI','SP','SN')]
@@ -399,16 +411,17 @@ server <- function(input, output,session) {
        mod.inv = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'inv',scale=T,logOut = input$logOut)
        mod.avg = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'avg',scale=T,logOut = input$logOut)
        mod.lqs = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'lqs',scale=T,logOut = input$logOut)
+       mod.rlm = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'rlm',scale=T,logOut = input$logOut)
        #mod.svm = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'svm',scale=T)
 
        measured=dat[,input$selectOut]
        if(input$logInp) measured=exp(exp(measured)-1)
        else measured=exp(measured)
        
-       lms<-data.frame(QCF=c(mod.glm$qcf,mod.inv$qcf,mod.avg$qcf,mod.pca$qcf,mod.lqs$qcf),
-                  CC=c(mod.glm$cc,mod.inv$cc,mod.avg$cc,mod.pca$cc,mod.lqs$cc),
-                  rbind(mod.glm$ab,mod.inv$ab,mod.avg$ab,mod.pca$ab,mod.lqs$ab))
-       rownames(lms) <- c('LM.glm','LM.inv','LM.avg','LM.pca','LM.lqs')
+       lms<-data.frame(QCF=c(mod.glm$qcf,mod.inv$qcf,mod.avg$qcf,mod.pca$qcf,mod.lqs$qcf,mod.rlm$qcf),
+                  CC=c(mod.glm$cc,mod.inv$cc,mod.avg$cc,mod.pca$cc,mod.lqs$cc,mod.rlm$cc),
+                  rbind(mod.glm$ab,mod.inv$ab,mod.avg$ab,mod.pca$ab,mod.lqs$ab,mod.rlm$ab))
+       rownames(lms) <- c('LM.glm','LM.inv','LM.avg','LM.pca','LM.lqs','LM.rlm')
      }
      #browser()
      lms <- lms[with(lms,order(QCF)),]
@@ -471,9 +484,9 @@ server <- function(input, output,session) {
 
      #plot glm-inv averaged  line
      par(lwd=2,lty="dashed") 
-     abline(mod.lqs$ab,col=pal[input$clsid])
-     txt=getTxtLoc(mod.lqs$ab,range)
-     text(txt$x,txt$y,"lqs",srt=txt$srt,pos=3,col=pal[input$clsid])
+     abline(mod.rlm$ab,col=pal[input$clsid])
+     txt=getTxtLoc(mod.rlm$ab,range)
+     text(txt$x,txt$y,"rlm",srt=txt$srt,pos=3,col=pal[input$clsid])
      
      
      par(lwd=1,lty="solid")
@@ -488,23 +501,26 @@ server <- function(input, output,session) {
      #screen(3);par(pch=16)
      par(mfg = c(2,1),pch=16,lwd = 1)
      #plot(lm.inv,which=3)
-     cols <- c('black','blue','red','green','magenta')
+     cols <- c('black','blue','red','green')
      cols = setPaletteTransp(colors = cols,alpha = 0.1)
-     names(cols) <- c('glm','inv','avg','pca','lqs')
+     names(cols) <- c('glm','inv','avg','pca')
        plot(mod.inv$resid ~ measured, col=cols['inv'])
      points(mod.avg$resid ~ measured, col=cols['avg'])
      points(mod.pca$resid ~ measured, col=cols['pca'])
      points(mod.glm$resid ~ measured, col=cols['glm'])
+     points(mod.rlm$resid ~ measured, col=cols['rlm'])
      cols = setPaletteTransp(colors = cols,alpha = 1)
      resRange = c(range(measured),range(mod.inv$resid))
      k <- kde2d(x = measured,y = mod.glm$resid,lims = resRange);contour(k,nlevels=5,col=cols['glm'],add=T,drawlabels = F)
      k <- kde2d(x = measured,y = mod.inv$resid,lims = resRange);contour(k,nlevels=5,col=cols['inv'],add=T,drawlabels = F)
      k <- kde2d(x = measured,y = mod.avg$resid,lims = resRange);contour(k,nlevels=5,col=cols['avg'],add=T,drawlabels = F)
      k <- kde2d(x = measured,y = mod.pca$resid,lims = resRange);contour(k,nlevels=5,col=cols['pca'],add=T,drawlabels = F)
+     k <- kde2d(x = measured,y = mod.rlm$resid,lims = resRange);contour(k,nlevels=5,col=cols['rlm'],add=T,drawlabels = F)
      abline(lm(mod.glm$resid~measured)$coefficients,col=cols['glm'])
      abline(lm(mod.inv$resid~measured)$coefficients,col=cols['inv'])
      abline(lm(mod.avg$resid~measured)$coefficients,col=cols['avg'])
      abline(lm(mod.pca$resid~measured)$coefficients,col=cols['pca'])
+     abline(lm(mod.rlm$resid~measured)$coefficients,col=cols['rlm'])
      #abline(c(0,0),col='red')
      legend("topright",inset = c(0.01,0.01),
             legend = names(cols) ,
@@ -536,14 +552,28 @@ server <- function(input, output,session) {
      points(mod.inv$predicted~measured,col=cols['inv'],main=title,xlim=ranges,ylim=ranges)
      points(mod.avg$predicted~measured,col=cols['avg'],main=title,xlim=ranges,ylim=ranges)
      points(mod.pca$predicted~measured,col=cols['pca'],main=title,xlim=ranges,ylim=ranges)
+     #points(mod.rlm$predicted~measured,col=cols['rlm'],main=title,xlim=ranges,ylim=ranges)
      #plot(mod.lqs$predicted~measured,col=cols['lqs'],main=title,xlim=ranges,ylim=ranges)
      #plot(predicted~measured,col='grey30',main=title,xlim=ranges,ylim=ranges)
-     abline(c(0,1),col='red')
+     km=density(measured)
+     scaler=(ranges[2]-ranges[1])*0.5
      cols = setPaletteTransp(colors = cols,alpha = 1)
-     k <- kde2d(x = measured,y = mod.glm$predicted,lims = rep(ranges,2));contour(k,nlevels=5,col=cols['glm'],add=T,drawlabels = F)
-     k <- kde2d(x = measured,y = mod.inv$predicted,lims = rep(ranges,2));contour(k,nlevels=5,col=cols['inv'],add=T,drawlabels = F)
-     k <- kde2d(x = measured,y = mod.avg$predicted,lims = rep(ranges,2));contour(k,nlevels=5,col=cols['avg'],add=T,drawlabels = F)
-     k <- kde2d(x = measured,y = mod.pca$predicted,lims = rep(ranges,2));contour(k,nlevels=5,col=cols['pca'],add=T,drawlabels = F)
+     lines(x = km$x,y=km$y*scaler/max(km$y)+ranges[1],col='magenta',lwd=3,lty='dashed')
+     k<-density(mod.glm$predicted);lines(x = k$x,y=k$y*scaler/max(k$y)+ranges[1],col=cols['glm'],lwd=2)
+     k<-density(mod.inv$predicted);lines(x = k$x,y=k$y*scaler/max(k$y)+ranges[1],col=cols['inv'],lwd=2)
+     k<-density(mod.pca$predicted);lines(x = k$x,y=k$y*scaler/max(k$y)+ranges[1],col=cols['pca'],lwd=2)
+     k<-density(mod.avg$predicted);lines(x = k$x,y=k$y*scaler/max(k$y)+ranges[1],col=cols['avg'],lwd=2)
+     abline(c(0,1),lty='dashed',lwd=2,col='red')
+     #k <- kde2d(x = measured,y = mod.glm$predicted,lims = rep(ranges,2));contour(k,nlevels=5,col=cols['glm'],add=T,drawlabels = F)
+     #k <- kde2d(x = measured,y = mod.inv$predicted,lims = rep(ranges,2));contour(k,nlevels=5,col=cols['inv'],add=T,drawlabels = F)
+     #k <- kde2d(x = measured,y = mod.avg$predicted,lims = rep(ranges,2));contour(k,nlevels=5,col=cols['avg'],add=T,drawlabels = F)
+     #k <- kde2d(x = measured,y = mod.pca$predicted,lims = rep(ranges,2));contour(k,nlevels=5,col=cols['pca'],add=T,drawlabels = F)
+     #k <- kde2d(x = measured,y = mod.rlm$predicted,lims = rep(ranges,2));contour(k,nlevels=5,col=cols['rlm'],add=T,drawlabels = F)
+     abline(lm(mod.glm$predicted~measured)$coefficients,col=cols['glm'])
+     abline(lm(mod.inv$predicted~measured)$coefficients,col=cols['inv'])
+     abline(lm(mod.avg$predicted~measured)$coefficients,col=cols['avg'])
+     abline(lm(mod.pca$predicted~measured)$coefficients,col=cols['pca'])
+     #abline(lm(mod.rlm$predicted~measured)$coefficients,col=cols['rlm'])
      legend("topright",inset = c(0.01,0.01),
             legend = names(cols) ,
             col = cols,pch = 16)
