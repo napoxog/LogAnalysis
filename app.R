@@ -54,6 +54,8 @@ ui <- fluidPage(
         div(style=paste0("display: table-cell;vertical-align:top; width: 150px;"),checkboxInput('logInp','log(1+x)',value = T)),
         div(style=paste0("display: table-cell;vertical-align:top; width: 20px;"),HTML("<br>")),
         div(style=paste0("display: table-cell;vertical-align:top; width: 150px;"),checkboxInput('logOut','log(1+x)', value = T)),
+        div(style=paste0("display: table-cell;vertical-align:top; width: 20px;"),HTML("<br>")),
+        div(style=paste0("display: table-cell;vertical-align:top; width: 150px;"),checkboxInput('logAll','log(x)', value = T)),
         div(style=paste0("display: vertical-align:top; width: 20px;"),HTML("<br>"))
       ),
       # Show a plot of the generated distribution
@@ -175,9 +177,10 @@ descaleAB <- function (ab,dat_scaled,inout) {
   return(ab)
 }
 
-getModel <- function(dat,inout=c(1,2),type='glm',scale=TRUE, logOut=FALSE) {
+getModel <- function(dat,inout=c(1,2),type='glm',scale=TRUE, logpOut=FALSE, logOut) {
   dat_scaled=scale(dat)
   measured=dat[,inout[2]]
+  #dat_scaled[,inout[1]] = -sinh(dat_scaled[,inout[1]])
   #browser()
   if(type=='pca') ab=tls_pca(dat_scaled[,inout[1]],dat_scaled[,inout[2]])
   else if(type=='glm') ab=glm(dat_scaled[,inout[2]]~dat_scaled[,inout[1]])$coefficients
@@ -198,25 +201,27 @@ getModel <- function(dat,inout=c(1,2),type='glm',scale=TRUE, logOut=FALSE) {
   ab = descaleAB(ab = ab,dat_scaled = dat_scaled,inout = inout)
   
   predicted=ab[1]+ab[2]*dat[,inout[1]]  # no scaling
+  #predicted=asinh(-predicted)
   resid=predicted-measured
   #estimate prob.densities
-  denm=density(measured)
-  denp=density(predicted)
-  denr=density(resid)
+  denm=density(measured,from = min(measured),to = max(measured))
+  denp=density(predicted,from = min(measured),to = max(measured))
+  denr=density(resid,from = min(measured),to = max(measured))
   # estimating QC factors
   qcf0=sd(resid)
   qcf1=denr$bw
   #browser()
-  qcf2=sum(abs(denp$y-denm$y)/max(denm$y))
-  #qcf2=abs(sum(denp$y/denm$y))
+  #qcf2=sd(abs(denp$y-denm$y))#/max(denm$y))
+  qcf2=abs(sum((denp$y-denm$y)**2))
   qcf3=abs(lm(resid~measured)$coefficients[2])
   qcf=qcf2
   #print(c(qcf0,qcf1,qcf))
   #predicted.pca=(predicted.pca-B)/K    #descale
   cc=ccf(measured,predicted,lag.max = 0,plot = F)$acf[[1]]
   
-  if(logOut) predicted=exp(exp(predicted)-1)
-  else predicted = exp(predicted)
+  #if(logpOut) predicted=exp(exp(predicted)-1)
+  #if(logOut) predicted=exp(predicted)
+  
   return(list(ab=ab,predicted=predicted,resid=resid,cc=cc,qcf=qcf))
 }
 
@@ -289,6 +294,7 @@ server <- function(input, output,session) {
        return(NULL)
      } 
      #browser() 
+     print(input$datasetDT_rows_selected)
      parList = names(myReactives$data)
      parList = parList[parList %in% parList[input$datasetDT_rows_selected]]
      if(length(parList)<1) {
@@ -307,13 +313,19 @@ server <- function(input, output,session) {
      q = myReactives$data[,c(parList)]
      rownames(q) <- as.character(myReactives$data$DEPT)
      #colnames(q)[1]='DPH0'
-     q = q[complete.cases(q),]
+     qlog = q[complete.cases(q),]
      #browser()
      #q$dCALI = log10(q$dCALI)
-     qlog = log(q)
      #qlog$DPH0=q$DPH0
-
-     qlog = qlog[complete.cases(qlog),]
+     if(input$logAll) {
+       qlog = log(q)
+       qlog = qlog[complete.cases(qlog),]
+       #print(capture.output(summary(qlog)))
+     }
+     # if(input$logInp) qlog[,input$selectInp] = log1p(q[,input$selectInp])
+     # if(input$logOut) qlog[,input$selectOut] = log1p(q[,input$selectOut])
+     # qlog = qlog[complete.cases(qlog),]
+     
      print(c("qlog=",colnames(qlog)))
      #plot(qlog[-1])
      #cls = 4
@@ -340,12 +352,11 @@ server <- function(input, output,session) {
      #browser()
      showModDial()
      qlog = myReactives$qlog
-     # if(input$logInp) qlog[,input$selectInp] = log1p(qlog[,input$selectInp])
-     # if(input$logOut) qlog[,input$selectOut] = log1p(qlog[,input$selectOut])
-     # qlog$DT = log1p(qlog$DT)
-     # qlog$SN = log1p(qlog$SN)
      
+     if(input$logInp) qlog[,input$selectInp] = log1p(qlog[,input$selectInp])
+     if(input$logOut) qlog[,input$selectOut] = log1p(qlog[,input$selectOut])
      qlog = qlog[complete.cases(qlog),]
+
      if(dim(qlog)[1]<2) return(NULL)
      print(dim(qlog))
      #browser();
@@ -388,9 +399,9 @@ server <- function(input, output,session) {
      #par(pch=16)
      #plot(mbic,what = "classification")
      mcres = myReactives$mcres
-     if(input$logInp) mcres[,input$selectInp] = log1p(mcres[,input$selectInp])
-     if(input$logOut) mcres[,input$selectOut] = log1p(mcres[,input$selectOut])
-     mcres = mcres[complete.cases(mcres),]
+     # if(input$logInp) mcres[,input$selectInp] = log1p(mcres[,input$selectInp])
+     # if(input$logOut) mcres[,input$selectOut] = log1p(mcres[,input$selectOut])
+     # mcres = mcres[complete.cases(mcres),]
      #mcres = cbind(qlog,VVV12 = predict(mbic)$classification)
      dlms=list()
      pal=mclust.options("classPlotColors")
@@ -406,17 +417,20 @@ server <- function(input, output,session) {
      cls = input$clsid
      {
        dat = mcres[mcres$VVV12 == cls,]
-       mod.pca = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'pca',scale=T,logOut = input$logOut)
-       mod.glm = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'glm',scale=T,logOut = input$logOut)
-       mod.inv = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'inv',scale=T,logOut = input$logOut)
-       mod.avg = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'avg',scale=T,logOut = input$logOut)
-       mod.lqs = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'lqs',scale=T,logOut = input$logOut)
-       mod.rlm = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'rlm',scale=T,logOut = input$logOut)
+       mod.pca = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'pca',scale=T,logpOut = input$logOut,logOut = input$logAll)
+       mod.glm = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'glm',scale=T,logpOut = input$logOut,logOut = input$logAll)
+       mod.inv = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'inv',scale=T,logpOut = input$logOut,logOut = input$logAll)
+       mod.avg = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'avg',scale=T,logpOut = input$logOut,logOut = input$logAll)
+       mod.lqs = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'lqs',scale=T,logpOut = input$logOut,logOut = input$logAll)
+       mod.rlm = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'rlm',scale=T,logpOut = input$logOut,logOut = input$logAll)
        #mod.svm = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'svm',scale=T)
 
        measured=dat[,input$selectOut]
-       if(input$logInp) measured=exp(exp(measured)-1)
-       else measured=exp(measured)
+       #if(input$logInp) measured=exp(exp(measured)-1)
+       #else measured=exp(measured)
+       #if(input$logAll) measured=exp(measured)
+       print('measured range')
+       print(range(measured))
        
        lms<-data.frame(QCF=c(mod.glm$qcf,mod.inv$qcf,mod.avg$qcf,mod.pca$qcf,mod.lqs$qcf,mod.rlm$qcf),
                   CC=c(mod.glm$cc,mod.inv$cc,mod.avg$cc,mod.pca$cc,mod.lqs$cc,mod.rlm$cc),
@@ -428,7 +442,6 @@ server <- function(input, output,session) {
      print(lms)
      #plot single class ####
      mcres_2=mcres[mcres$VVV12 == input$clsid,]
-     k <- kde2d(y = mcres_2[,input$selectOut],x = mcres_2[,input$selectInp])
      
      #screen(2);par(pch=16)
      par(mfg = c(1,2),pch=16)
@@ -436,13 +449,11 @@ server <- function(input, output,session) {
      plot(mcres[,input$selectOut]~mcres[,input$selectInp],col='grey80',
           main = paste0(rownames(lms)[1],'\'s QCF: ',prettyNum(lms$QCF[1])));
      #browser()
-     colors=getTranspRamp(pal[input$clsid],grades = 5,alphaRange = c(0.1,0.7))
-     #.filled.contour(x = k$x,y = k$y,z = k$z,levels=seq(min(k$z),max(k$z),length.out = 5),col=colors)
-     #contour(k,col=pal[mcres_2$VVV12],add=TRUE)
-
-     #points(y=mcres[,input$selectOut],x=mcres[,input$selectInp],col='grey80');
      range = rbind(range(mcres[,input$selectOut]),range(mcres[,input$selectInp]))
-     #ymax = max(mcres[,input$selectOut])
+     colors=getTranspRamp(pal[input$clsid],grades = 5,alphaRange = c(0.0,0.8))
+     k <- kde2d(y = mcres_2[,input$selectOut],x = mcres_2[,input$selectInp])#,lims = c(range[1,],range[2,]))
+     .filled.contour(x = k$x,y = k$y,z = k$z,levels=seq(min(k$z),max(k$z),length.out = 5),col=colors)
+     #contour(k,col=pal[mcres_2$VVV12],add=TRUE)
 
      getTxtLoc <- function (ab,ranges, margin = 0.05) {
        # get the plot aspect ratio as 'asp'
@@ -492,7 +503,7 @@ server <- function(input, output,session) {
      par(lwd=1,lty="solid")
      #points(y=mcres_2[,input$selectOut],x=mcres_2[,input$selectInp],col=pal[mcres_2$VVV12]);
      #points(y=mcres_2[,input$selectOut],x=mcres_2[,input$selectInp],col=colors[1]);
-     contour(k,nlevels=5,col=pal[mcres_2$VVV12],lwd = 1,add=T,drawlabels = F)
+     #contour(k,nlevels=5,col=pal[mcres_2$VVV12],lwd = 1,add=T,drawlabels = F)
      #print(title)
      
      # select best fit 1) by sd(resid)?
@@ -558,11 +569,13 @@ server <- function(input, output,session) {
      #plot(predicted~measured,col='grey30',main=title,xlim=ranges,ylim=ranges)
      
      abline(c(0,1),lty='dashed',lwd=2,col='red')
+     # draw 2d densities with lines
      #k <- kde2d(x = measured,y = mod.glm$predicted,lims = rep(ranges,2));contour(k,nlevels=5,col=cols['glm'],add=T,drawlabels = F)
      #k <- kde2d(x = measured,y = mod.inv$predicted,lims = rep(ranges,2));contour(k,nlevels=5,col=cols['inv'],add=T,drawlabels = F)
      #k <- kde2d(x = measured,y = mod.avg$predicted,lims = rep(ranges,2));contour(k,nlevels=5,col=cols['avg'],add=T,drawlabels = F)
      #k <- kde2d(x = measured,y = mod.pca$predicted,lims = rep(ranges,2));contour(k,nlevels=5,col=cols['pca'],add=T,drawlabels = F)
      #k <- kde2d(x = measured,y = mod.rlm$predicted,lims = rep(ranges,2));contour(k,nlevels=5,col=cols['rlm'],add=T,drawlabels = F)
+     # draw 2d densities with filled polys ####
      col.glm=getTranspRamp(cols['glm'],grades = 5,alphaRange = c(0.0,0.3))
      col.inv=getTranspRamp(cols['inv'],grades = 5,alphaRange = c(0.0,0.3))
      col.pca=getTranspRamp(cols['pca'],grades = 5,alphaRange = c(0.0,0.3))
@@ -572,18 +585,20 @@ server <- function(input, output,session) {
      k <- kde2d(x = measured,y = mod.avg$predicted,lims = rep(ranges,2));.filled.contour(x=k$x,y=k$y,z=k$z,levels=seq(min(k$z),max(k$z),length.out = 5),col=col.avg)
      k <- kde2d(x = measured,y = mod.pca$predicted,lims = rep(ranges,2));.filled.contour(x=k$x,y=k$y,z=k$z,levels=seq(min(k$z),max(k$z),length.out = 5),col=col.pca)
 #     k <- kde2d(x = measured,y = mod.rlm$predicted,lims = rep(ranges,2));.filled.contour(x=k$x,y=k$y,z=k$z,nlevels=5,col=col.glm,add=T,drawlabels = F)
+     # draw correlation lines for each model ####
      cols = setPaletteTransp(colors = cols,alpha = 1)
      abline(lm(mod.glm$predicted~measured)$coefficients,col=cols['glm'])
      abline(lm(mod.inv$predicted~measured)$coefficients,col=cols['inv'])
      abline(lm(mod.avg$predicted~measured)$coefficients,col=cols['avg'])
      abline(lm(mod.pca$predicted~measured)$coefficients,col=cols['pca'])
      #abline(lm(mod.rlm$predicted~measured)$coefficients,col=cols['rlm'])
+     #### draw 1d densities with lines ####
      scaler=(ranges[2]-ranges[1])*0.5
-     km=density(measured);lines(x = km$x,y=km$y*scaler/max(km$y)+ranges[1],col='magenta',lwd=3,lty='dashed')
-     k<-density(mod.glm$predicted);lines(x = k$x,y=k$y*scaler/max(km$y)+ranges[1],col=cols['glm'],lwd=2)
-     k<-density(mod.inv$predicted);lines(x = k$x,y=k$y*scaler/max(km$y)+ranges[1],col=cols['inv'],lwd=2)
-     k<-density(mod.pca$predicted);lines(x = k$x,y=k$y*scaler/max(km$y)+ranges[1],col=cols['pca'],lwd=2)
-     k<-density(mod.avg$predicted);lines(x = k$x,y=k$y*scaler/max(km$y)+ranges[1],col=cols['avg'],lwd=2)
+     km=density(measured);lines(x = km$x,y=(km$y-km$y)*scaler/max(km$y)+mean(ranges),col='magenta',lwd=3,lty='dashed')
+     k<-density(mod.glm$predicted,from=ranges[1],to=ranges[2]);lines(x = k$x,y=(k$y-km$y)*scaler/max(km$y)+mean(ranges),col=cols['glm'],lwd=2)
+     k<-density(mod.inv$predicted,from=ranges[1],to=ranges[2]);lines(x = k$x,y=(k$y-km$y)*scaler/max(km$y)+mean(ranges),col=cols['inv'],lwd=2)
+     k<-density(mod.pca$predicted,from=ranges[1],to=ranges[2]);lines(x = k$x,y=(k$y-km$y)*scaler/max(km$y)+mean(ranges),col=cols['pca'],lwd=2)
+     k<-density(mod.avg$predicted,from=ranges[1],to=ranges[2]);lines(x = k$x,y=(k$y-km$y)*scaler/max(km$y)+mean(ranges),col=cols['avg'],lwd=2)
      legend("topright",inset = c(0.01,0.01),
             legend = names(cols) ,
             col = cols,pch = 16)
@@ -599,6 +614,8 @@ server <- function(input, output,session) {
      #data = read_table2("D:/Libya - Pyroclastic Study/to_send/LAS/SIRT_GF44_Subonsh_Geo100_A7-100_Logs.txt", 
      #             col_types = cols(X11 = col_skip()))
      data=read_las(input$lasfile1$datapath,"-999.25")
+     colnames(data)[1] <- 'DEPT'
+     print(colnames(data))
      #browser()
      #data = read_table2(input$lasfile1$datapath, 
      #             col_types = cols(X11 = col_skip()))
@@ -607,13 +624,13 @@ server <- function(input, output,session) {
      #mcres = cbind(q,predict(mbic)$classification)
      #browser()
      data = data.frame(apply(data,c(1,2),FUN = function(x) {if(x==-999.25) return(NA) else return(x)}))
-     data$dBH = data$CALI
-     data$dBH[data$DEPT<3427] = 13+3/8
-     data$dBH[data$DEPT>=3427 & data$DEPT < 10877] = 9+5/8
-     data$dBH[data$DEPT>=10877 & data$DEPT < 13567] = 7
-     data$dBH[data$DEPT>=13567 & data$DEPT < 14663] = 5
-     data$dCALI = data$CALI - data$dBH
-     data$dCALI[data$dCALI<0]=NA
+     # data$dBH = data$CALI
+     # data$dBH[data$DEPT<3427] = 13+3/8
+     # data$dBH[data$DEPT>=3427 & data$DEPT < 10877] = 9+5/8
+     # data$dBH[data$DEPT>=10877 & data$DEPT < 13567] = 7
+     # data$dBH[data$DEPT>=13567 & data$DEPT < 14663] = 5
+     # data$dCALI = data$CALI - data$dBH
+     # data$dCALI[data$dCALI<0]=NA
      #browser()
      myReactives$data=data
    })
