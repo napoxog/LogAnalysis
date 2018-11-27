@@ -43,9 +43,7 @@ ui <- fluidPage(
           buttonLabel = "Открыть..."
         ),
         dataTableOutput('datasetDT'),
-        div(style=paste0("display: table-cell;vertical-align:top; width: 150px;"),actionButton("runCalc",label = 'Рассчитать',icon = icon("play-circle"))),
-        #div(style=paste0("display: table-cell;vertical-align:top; width: 10px;"),HTML("<br>")),
-        div(style=paste0("display: table-cell;vertical-align:top; width: 120px;"),downloadButton('downloadDataset', 'Save dataset')),
+        div(style=paste0("display: table-cell;vertical-align:top; width: 150px;"),checkboxInput('logAll','log(all_data)', value = T)),
         div(style=paste0("display: vertical-align:top; width: 20px;"),HTML("<br>")),
         div(style=paste0("display: table-cell;vertical-align:top; width: 120px;"),selectInput("selectInp", "Исходный",choices = NULL)),
         div(style=paste0("display: table-cell;vertical-align:top; width: 20px;"),HTML("<br>")),
@@ -55,7 +53,10 @@ ui <- fluidPage(
         div(style=paste0("display: table-cell;vertical-align:top; width: 20px;"),HTML("<br>")),
         div(style=paste0("display: table-cell;vertical-align:top; width: 150px;"),checkboxInput('logOut','log(1+x)', value = T)),
         div(style=paste0("display: table-cell;vertical-align:top; width: 20px;"),HTML("<br>")),
-        div(style=paste0("display: table-cell;vertical-align:top; width: 150px;"),checkboxInput('logAll','log(x)', value = T)),
+        div(style=paste0("display: vertical-align:top; width: 20px;"),HTML("<br>")),
+        div(style=paste0("display: table-cell;vertical-align:top; width: 150px;"),actionButton("runCalc",label = 'Рассчитать',icon = icon("play-circle"))),
+        #div(style=paste0("display: table-cell;vertical-align:top; width: 10px;"),HTML("<br>")),
+        div(style=paste0("display: table-cell;vertical-align:top; width: 120px;"),downloadButton('downloadDataset', 'Save dataset')),
         div(style=paste0("display: vertical-align:top; width: 20px;"),HTML("<br>"))
       ),
       # Show a plot of the generated distribution
@@ -182,15 +183,36 @@ getModel <- function(dat,inout=c(1,2),type='glm',scale=TRUE, logpOut=FALSE, logO
   measured=dat[,inout[2]]
   #dat_scaled[,inout[1]] = -sinh(dat_scaled[,inout[1]])
   #browser()
-  if(type=='pca') ab=tls_pca(dat_scaled[,inout[1]],dat_scaled[,inout[2]])
-  else if(type=='glm') ab=glm(dat_scaled[,inout[2]]~dat_scaled[,inout[1]])$coefficients
-  else if(type=='lqs') ab=lqs(dat_scaled[,inout[2]]~dat_scaled[,inout[1]])$coefficients
-  else if(type=='rlm') ab=rlm(dat_scaled[,inout[2]]~dat_scaled[,inout[1]])$coefficients
-  else if(type=='inv') {
+  lty='solid'
+  lwd=1
+  col='black'
+  if(type=='pca') { 
+    ab=tls_pca(dat_scaled[,inout[1]],dat_scaled[,inout[2]])
+    lty='dotted'
+    lwd=3
+    col='green'
+  } else if(type=='glm') {
+    col='black'
+    ab=glm(dat_scaled[,inout[2]]~dat_scaled[,inout[1]])$coefficients
+  } else if(type=='lqs') {
+    lty='dashed'
+    lwd=3
+    col='magenta'
+    ab=lqs(dat_scaled[,inout[2]]~dat_scaled[,inout[1]])$coefficients
+  } else if(type=='rlm') {
+    lty='dotted'
+    lwd=1
+    col='brown'
+    ab=rlm(dat_scaled[,inout[2]]~dat_scaled[,inout[1]])$coefficients
+  } else if(type=='inv') {
+    col='blue'
     ab=glm(dat_scaled[,inout[1]]~dat_scaled[,inout[2]])$coefficients
     ab=c(Intercept = -ab[1]/ab[2],Gradient = 1/ab[2])
   }
   if(type =='avg') {
+    lty='longdash'
+    lwd=3
+    col='red'
     ab1=tls_pca(dat_scaled[,inout[1]],dat_scaled[,inout[2]])
     ab2=glm(dat_scaled[,inout[2]]~dat_scaled[,inout[1]])$coefficients
     ab3=glm(dat_scaled[,inout[1]]~dat_scaled[,inout[2]])$coefficients
@@ -222,7 +244,7 @@ getModel <- function(dat,inout=c(1,2),type='glm',scale=TRUE, logpOut=FALSE, logO
   #if(logpOut) predicted=exp(exp(predicted)-1)
   #if(logOut) predicted=exp(predicted)
   
-  return(list(ab=ab,predicted=predicted,resid=resid,cc=cc,qcf=qcf))
+  return(list(ab=ab,predicted=predicted,resid=resid,cc=cc,qcf=qcf,lty=lty,lwd=lwd,col=col))
 }
 
 setPaletteTransp <- function(colors = NULL ,alpha = 0.5) {
@@ -413,33 +435,22 @@ server <- function(input, output,session) {
      classes= sort(unique(mcres$VVV12))
      legend("topright",inset = c(0.01,0.01),legend = classes ,col = pal[classes],pch = 16)
      #browser( )
-     #for(cls in unique(mcres$VVV12)) 
-     cls = input$clsid
+     # define set of models to use
+     lms2calc=c('pca','glm','inv','avg','lqs','rlm')
+     
+     lms = list()
+     dat = mcres[mcres$VVV12 == input$clsid,]
+     for(modNm in lms2calc) 
      {
-       dat = mcres[mcres$VVV12 == cls,]
-       mod.pca = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'pca',scale=T,logpOut = input$logOut,logOut = input$logAll)
-       mod.glm = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'glm',scale=T,logpOut = input$logOut,logOut = input$logAll)
-       mod.inv = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'inv',scale=T,logpOut = input$logOut,logOut = input$logAll)
-       mod.avg = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'avg',scale=T,logpOut = input$logOut,logOut = input$logAll)
-       mod.lqs = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'lqs',scale=T,logpOut = input$logOut,logOut = input$logAll)
-       mod.rlm = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'rlm',scale=T,logpOut = input$logOut,logOut = input$logAll)
-       #mod.svm = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = 'svm',scale=T)
-
-       measured=dat[,input$selectOut]
-       #if(input$logInp) measured=exp(exp(measured)-1)
-       #else measured=exp(measured)
-       #if(input$logAll) measured=exp(measured)
-       print('measured range')
-       print(range(measured))
-       
-       lms<-data.frame(QCF=c(mod.glm$qcf,mod.inv$qcf,mod.avg$qcf,mod.pca$qcf,mod.lqs$qcf,mod.rlm$qcf),
-                  CC=c(mod.glm$cc,mod.inv$cc,mod.avg$cc,mod.pca$cc,mod.lqs$cc,mod.rlm$cc),
-                  rbind(mod.glm$ab,mod.inv$ab,mod.avg$ab,mod.pca$ab,mod.lqs$ab,mod.rlm$ab))
-       rownames(lms) <- c('LM.glm','LM.inv','LM.avg','LM.pca','LM.lqs','LM.rlm')
+       mod = getModel(dat=dat,inout = c(input$selectInp,input$selectOut),type = modNm,scale=T,logpOut = input$logOut,logOut = input$logAll)
+       lms = append(lms,list(c(name=modNm,mod)))
      }
+     names(lms) <- lms2calc
      #browser()
-     lms <- lms[with(lms,order(QCF)),]
-     print(lms)
+     lms = lms[order(sapply(lms,function(x) x$qcf))]
+     lapply(lms,function(x) print(paste('class',input$clsid,x$name,prettyNum(x$qcf))))
+     
+     measured=dat[,input$selectOut]
      #plot single class ####
      mcres_2=mcres[mcres$VVV12 == input$clsid,]
      
@@ -447,7 +458,7 @@ server <- function(input, output,session) {
      par(mfg = c(1,2),pch=16)
      #lm=dlms[[paste(input$clsid)]]
      plot(mcres[,input$selectOut]~mcres[,input$selectInp],col='grey80',
-          main = paste0(rownames(lms)[1],'\'s QCF: ',prettyNum(lms$QCF[1])));
+          main = paste0(lms[[1]]$name,'\'s QCF: ',prettyNum(lms[[1]]$qcf)));
      #browser()
      range = rbind(range(mcres[,input$selectOut]),range(mcres[,input$selectInp]))
      colors=getTranspRamp(pal[input$clsid],grades = 5,alphaRange = c(0.0,0.8))
@@ -473,140 +484,78 @@ server <- function(input, output,session) {
        return(list(x=txt.x,y=txt.y,srt=txt.rot))
      }
      
+     addABline <- function(mod=NULL) {
+       if(is.null(mod)) return(NULL)
+       par(lwd=2,lty=mod$lty)
+       abline(mod$ab,col=pal[input$clsid])
+       txt=getTxtLoc(mod$ab,range)
+       text(txt$x,txt$y,mod$name,srt=txt$srt,pos=3,col=pal[input$clsid])
+     }
      
-     #plot glm line
-     abline(mod.glm$ab,col=pal[input$clsid])
-     txt=getTxtLoc(mod.glm$ab,range)
-     text(txt$x,txt$y,"glm",srt=txt$srt,pos=3,col=pal[input$clsid])
-     #plot inverse glm line
-     abline(mod.inv$ab,col=pal[input$clsid])
-     txt=getTxtLoc(mod.inv$ab,range)
-     text(txt$x,txt$y,"inv",srt=txt$srt,pos=3,col=pal[input$clsid])
-     #plot PCA (ortho) line
-     par(lwd=2,lty="dotted")
-     abline(mod.pca$ab,col=pal[input$clsid])
-     txt=getTxtLoc(mod.pca$ab,range)
-     text(txt$x,txt$y,"pca",srt=txt$srt,pos=3,col=pal[input$clsid])
-     #plot glm-inv averaged  line
-     par(lwd=2,lty="longdash") 
-     abline(mod.avg$ab,col=pal[input$clsid])
-     txt=getTxtLoc(mod.avg$ab,range)
-     text(txt$x,txt$y,"avg",srt=txt$srt,pos=3,col=pal[input$clsid])
+     #lineTypes=cbind(c(names(lms),c('solid','solid','dotted','longdash','dashed','')))
+     lapply(lms,function(x) addABline(x))
 
-     #plot glm-inv averaged  line
-     par(lwd=2,lty="dashed") 
-     abline(mod.rlm$ab,col=pal[input$clsid])
-     txt=getTxtLoc(mod.rlm$ab,range)
-     text(txt$x,txt$y,"rlm",srt=txt$srt,pos=3,col=pal[input$clsid])
-     
-     
      par(lwd=1,lty="solid")
-     #points(y=mcres_2[,input$selectOut],x=mcres_2[,input$selectInp],col=pal[mcres_2$VVV12]);
-     #points(y=mcres_2[,input$selectOut],x=mcres_2[,input$selectInp],col=colors[1]);
-     #contour(k,nlevels=5,col=pal[mcres_2$VVV12],lwd = 1,add=T,drawlabels = F)
-     #print(title)
-     
-     # select best fit 1) by sd(resid)?
-     
+
      #plot LM residuals ####
+     cols <- sapply(lms,function(x) x$col)
+     #names(cols) <- lapply(lms,function(x) x$name)
+     #browser()
+     #cols = setPaletteTransp(colors = cols,alpha = 0.1)
+     resRange = c(range(measured),range(lms$inv$resid))
+     addResid <- function(mod=NULL) {
+       if(is.null(mod)) return(NULL)
+       #browser()
+       col=setPaletteTransp(mod$col,0.1)
+       points(mod$resid ~ measured, col=col)
+       k <- kde2d(x = measured,y = mod$resid,lims = resRange);contour(k,nlevels=5,col=mod$col,add=T,drawlabels = F)
+       abline(lm(mod$resid~measured)$coefficients,col=mod$col)
+     }
      #screen(3);par(pch=16)
      par(mfg = c(2,1),pch=16,lwd = 1)
      #plot(lm.inv,which=3)
-     cols <- c('black','blue','red','green')
-     cols = setPaletteTransp(colors = cols,alpha = 0.1)
-     names(cols) <- c('glm','inv','avg','pca')
-       plot(mod.inv$resid ~ measured, col=cols['inv'])
-     points(mod.avg$resid ~ measured, col=cols['avg'])
-     points(mod.pca$resid ~ measured, col=cols['pca'])
-     points(mod.glm$resid ~ measured, col=cols['glm'])
-     points(mod.rlm$resid ~ measured, col=cols['rlm'])
-     cols = setPaletteTransp(colors = cols,alpha = 1)
-     resRange = c(range(measured),range(mod.inv$resid))
-     k <- kde2d(x = measured,y = mod.glm$resid,lims = resRange);contour(k,nlevels=5,col=cols['glm'],add=T,drawlabels = F)
-     k <- kde2d(x = measured,y = mod.inv$resid,lims = resRange);contour(k,nlevels=5,col=cols['inv'],add=T,drawlabels = F)
-     k <- kde2d(x = measured,y = mod.avg$resid,lims = resRange);contour(k,nlevels=5,col=cols['avg'],add=T,drawlabels = F)
-     k <- kde2d(x = measured,y = mod.pca$resid,lims = resRange);contour(k,nlevels=5,col=cols['pca'],add=T,drawlabels = F)
-     k <- kde2d(x = measured,y = mod.rlm$resid,lims = resRange);contour(k,nlevels=5,col=cols['rlm'],add=T,drawlabels = F)
-     abline(lm(mod.glm$resid~measured)$coefficients,col=cols['glm'])
-     abline(lm(mod.inv$resid~measured)$coefficients,col=cols['inv'])
-     abline(lm(mod.avg$resid~measured)$coefficients,col=cols['avg'])
-     abline(lm(mod.pca$resid~measured)$coefficients,col=cols['pca'])
-     abline(lm(mod.rlm$resid~measured)$coefficients,col=cols['rlm'])
-     #abline(c(0,0),col='red')
+     plot(lms$inv$resid ~ measured,type='n')
+     lapply(lms,function(x) addResid(x))
+     # 
      legend("topright",inset = c(0.01,0.01),
-            legend = names(cols) ,
+            legend = names(lms) ,
             col = cols,pch = 16)
      #browser()
-     
-     ab=mod.inv$ab
-     cc=mod.inv$cc
-     predicted=mod.inv$predicted
-     
-     mod=switch(input$selectXP,
-               glm=mod.glm,
-               inv=mod.inv,
-               avg=mod.avg,
-               pca=mod.pca,
-               lqs=mod.lqs)
-     
+     # 1st model in list has the best QCF
+     mod = lms[[1]]
      ab=mod$ab
      cc=mod$cc
      predicted=mod$predicted
      #plot LM xplot ####
      #screen(4);par(pch=16)
      par(mfg = c(2,2),pch=16)
-     #browser()
-     ranges<-range(measured,predicted)
-     title = paste("CC for class",input$clsid,'=',prettyNum(cc))
-     cols = setPaletteTransp(colors = cols,alpha = 0.2)
-     plot(data.frame(measured,measured),col='red',main=title,xlim=ranges,ylim=ranges)
-     #plot(mod.glm$predicted~measured,col=cols['glm'],main=title,xlim=ranges,ylim=ranges)
-     #points(mod.inv$predicted~measured,col=cols['inv'],main=title,xlim=ranges,ylim=ranges)
-     #points(mod.avg$predicted~measured,col=cols['avg'],main=title,xlim=ranges,ylim=ranges)
-     #points(mod.pca$predicted~measured,col=cols['pca'],main=title,xlim=ranges,ylim=ranges)
-     #points(mod.rlm$predicted~measured,col=cols['rlm'],main=title,xlim=ranges,ylim=ranges)
-     #plot(mod.lqs$predicted~measured,col=cols['lqs'],main=title,xlim=ranges,ylim=ranges)
-     #plot(predicted~measured,col='grey30',main=title,xlim=ranges,ylim=ranges)
      
-     abline(c(0,1),lty='dashed',lwd=2,col='red')
-     # draw 2d densities with lines
-     #k <- kde2d(x = measured,y = mod.glm$predicted,lims = rep(ranges,2));contour(k,nlevels=5,col=cols['glm'],add=T,drawlabels = F)
-     #k <- kde2d(x = measured,y = mod.inv$predicted,lims = rep(ranges,2));contour(k,nlevels=5,col=cols['inv'],add=T,drawlabels = F)
-     #k <- kde2d(x = measured,y = mod.avg$predicted,lims = rep(ranges,2));contour(k,nlevels=5,col=cols['avg'],add=T,drawlabels = F)
-     #k <- kde2d(x = measured,y = mod.pca$predicted,lims = rep(ranges,2));contour(k,nlevels=5,col=cols['pca'],add=T,drawlabels = F)
-     #k <- kde2d(x = measured,y = mod.rlm$predicted,lims = rep(ranges,2));contour(k,nlevels=5,col=cols['rlm'],add=T,drawlabels = F)
-     # draw 2d densities with filled polys ####
-     col.glm=getTranspRamp(cols['glm'],grades = 5,alphaRange = c(0.0,0.3))
-     col.inv=getTranspRamp(cols['inv'],grades = 5,alphaRange = c(0.0,0.3))
-     col.pca=getTranspRamp(cols['pca'],grades = 5,alphaRange = c(0.0,0.3))
-     col.avg=getTranspRamp(cols['avg'],grades = 5,alphaRange = c(0.0,0.3))
-     k <- kde2d(x = measured,y = mod.glm$predicted,lims = rep(ranges,2));.filled.contour(x=k$x,y=k$y,z=k$z,levels=seq(min(k$z),max(k$z),length.out = 5),col=col.glm)
-     k <- kde2d(x = measured,y = mod.inv$predicted,lims = rep(ranges,2));.filled.contour(x=k$x,y=k$y,z=k$z,levels=seq(min(k$z),max(k$z),length.out = 5),col=col.inv)
-     k <- kde2d(x = measured,y = mod.avg$predicted,lims = rep(ranges,2));.filled.contour(x=k$x,y=k$y,z=k$z,levels=seq(min(k$z),max(k$z),length.out = 5),col=col.avg)
-     k <- kde2d(x = measured,y = mod.pca$predicted,lims = rep(ranges,2));.filled.contour(x=k$x,y=k$y,z=k$z,levels=seq(min(k$z),max(k$z),length.out = 5),col=col.pca)
-#     k <- kde2d(x = measured,y = mod.rlm$predicted,lims = rep(ranges,2));.filled.contour(x=k$x,y=k$y,z=k$z,nlevels=5,col=col.glm,add=T,drawlabels = F)
-     # draw correlation lines for each model ####
-     cols = setPaletteTransp(colors = cols,alpha = 1)
-     abline(lm(mod.glm$predicted~measured)$coefficients,col=cols['glm'])
-     abline(lm(mod.inv$predicted~measured)$coefficients,col=cols['inv'])
-     abline(lm(mod.avg$predicted~measured)$coefficients,col=cols['avg'])
-     abline(lm(mod.pca$predicted~measured)$coefficients,col=cols['pca'])
-     #abline(lm(mod.rlm$predicted~measured)$coefficients,col=cols['rlm'])
-     #### draw 1d densities with lines ####
+     ranges<-range(measured,predicted)
      scaler=(ranges[2]-ranges[1])*0.5
+     title = paste("CC for class",input$clsid,'=',prettyNum(cc))
+     plot(data.frame(measured,measured),col='red',main=title,xlim=ranges,ylim=ranges, type = 'n')
      km=density(measured);lines(x = km$x,y=(km$y-km$y)*scaler/max(km$y)+mean(ranges),col='magenta',lwd=3,lty='dashed')
-     k<-density(mod.glm$predicted,from=ranges[1],to=ranges[2]);lines(x = k$x,y=(k$y-km$y)*scaler/max(km$y)+mean(ranges),col=cols['glm'],lwd=2)
-     k<-density(mod.inv$predicted,from=ranges[1],to=ranges[2]);lines(x = k$x,y=(k$y-km$y)*scaler/max(km$y)+mean(ranges),col=cols['inv'],lwd=2)
-     k<-density(mod.pca$predicted,from=ranges[1],to=ranges[2]);lines(x = k$x,y=(k$y-km$y)*scaler/max(km$y)+mean(ranges),col=cols['pca'],lwd=2)
-     k<-density(mod.avg$predicted,from=ranges[1],to=ranges[2]);lines(x = k$x,y=(k$y-km$y)*scaler/max(km$y)+mean(ranges),col=cols['avg'],lwd=2)
+     
+     addXPlot <- function(mod=NULL) {
+       if(is.null(mod)) return(NULL)
+       col.band=getTranspRamp(mod$col,grades = 5,alphaRange = c(0.0,0.3))
+       # draw scatter plot
+       # points(mod$predicted~measured,col=mod$col,xlim=ranges,ylim=ranges)
+       # draw 2d densities with lines ####
+       k <- kde2d(x = measured,y = mod$predicted,lims = rep(ranges,2))
+       .filled.contour(x=k$x,y=k$y,z=k$z,levels=seq(min(k$z),max(k$z),length.out = 5),col=col.band)     
+       # draw correlation lines for each model ####
+       abline(lm(mod$predicted~measured)$coefficients,col=mod$col)
+       # draw 1d densities with lines ####
+       k<-density(mod$predicted,from=ranges[1],to=ranges[2])
+       lines(x = k$x,y=(k$y-km$y)*scaler/max(km$y)+mean(ranges),col=mod$col,lwd=2)
+     }
+     #browser()
+     lapply(lms,function(x) addXPlot(x))
      legend("topright",inset = c(0.01,0.01),
             legend = names(cols) ,
             col = cols,pch = 16)
-     #abline(lm(mcres_2$SN~predict(lm)),col='black')
-     #split.screen(c(2,2))
-     #screen(1)
-     #plot(dat$DT,predict(dlm),main=ccf(dat$DT,predict(dlm),lag.max = 0,plot = F)$acf[[1]])
-     
+
    })
   
    #### Load data ####
