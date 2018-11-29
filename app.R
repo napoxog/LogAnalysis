@@ -509,8 +509,8 @@ server <- function(input, output,session) {
      #dat = myReactives$data[,c(input$selectInp,input$selectOut)]
      #dat$DPH = myReactives$data[[1]]
      
-     lmData = myReactives$data[,c(input$selectInp,input$selectOut)]
-     lmData$DPH = myReactives$data[[1]]
+     lmData = myReactives$qlog[,c(input$selectInp,input$selectOut)]
+     lmData$DPH = as.numeric(rownames(myReactives$qlog))
      
      lmMc = mcres[,'VVV12',drop=F]
      lmMc$DPH = as.numeric(rownames(mcres))
