@@ -363,6 +363,45 @@ server <- function(input, output,session) {
      }
    )
    
+   logListProxy = dataTableProxy('datasetDT')
+   observe({
+     if(is.null(myReactives$data) || all(!(dim(myReactives$data)>2))) {
+       #plotError("No Data")
+       print("no data")
+       return(NULL)
+     }
+     
+     selPar=input$datasetDT_rows_selected
+     
+     data<- myReactives$data
+     
+     if(is.null(selPar)) {
+       cover = sapply(names(data), FUN = function(x) 
+         round(100*length(data[[1]][!is.na(data[,x])])/length(data[[1]])))
+     } else {
+       selnames=names(data)[input$datasetDT_rows_selected]
+       lens = sapply(selnames, FUN = function(x) 
+         length(data[[1]][!is.na(data[,x])]))
+       maxLength = max(lens)
+       cover = rep(x = "--",ncol(data))
+       cover[selPar] = sapply(selnames, FUN = function(x) 
+         round(100*length(data[[1]][!is.na(data[,x])])/maxLength))
+     }
+     #browser()
+     logList = data.frame(names = names(data),
+                          min = sapply(names(data), FUN = function(x) min(data[, x], na.rm = T)),
+                          max = sapply(names(data), FUN =function(x) max(data[, x], na.rm = T)),
+                          cover = cover
+     )
+     #isolate(myReactives$logList$cover <- cover)
+     replaceData(proxy = logListProxy,data = logList, clearSelection = F,resetPaging = F)
+     #selectRows(logListProxy,selPar)
+     #replaceData(proxy = logListProxy,data = myReactives$logList, clearSelection = F,resetPaging = F)
+     #reloadData(proxy = logListProxy, clearSelection = F)
+     #isolate(myReactives$datasetDT$x$data$cover <- cover)
+     #print(isolate(myReactives$logList$cover))
+   })
+   
    #### Precess data ####
    observe({
      if(is.null(myReactives$data) || all(!(dim(myReactives$data)>2))) {
@@ -370,6 +409,7 @@ server <- function(input, output,session) {
        print("no data")
        return(NULL)
      }
+     
      if(is.null(input$datasetDT_rows_selected) || length(input$datasetDT_rows_selected)<2) {
        updateSelectInput(session = session,"selectInp",choices = character(0))
        updateSelectInput(session = session,"selectOut",choices = character(0))
@@ -377,6 +417,8 @@ server <- function(input, output,session) {
        return(NULL)
      } 
      #browser() 
+     
+     
      print(input$datasetDT_rows_selected)
      parList = names(myReactives$data)
      parList = parList[parList %in% parList[input$datasetDT_rows_selected]]
@@ -628,22 +670,21 @@ server <- function(input, output,session) {
      # data$dCALI[data$dCALI<0]=NA
      #browser()
      myReactives$data=data
-   })
-   #### Plot Table ####
-   output$datasetDT <- renderDataTable({
-     data = myReactives$data
-     if(is.null(data) || length(data)<2) return(NULL)
-     #browser()
+     
+     cover = sapply(names(data), FUN = function(x) 
+       round(100*length(data[[1]][!is.na(data[,x])])/length(data[[1]])))
      logList = data.frame(names = names(data), 
                           min = sapply(names(data), FUN = function(x) min(data[, x], na.rm = T)), 
                           max = sapply(names(data), FUN =function(x) max(data[, x], na.rm = T)),
-                          cover = sapply(names(data), FUN = function(x) 
-                            round(100*length(data$DEPT[!is.na(data[,x])])/length(data$DEPT)))
-                          )
-     #cover = sapply(names(data), FUN = function(x) 
-     #round(100*(max(data$DEPT[!is.na(data[,x])])-min(data$DEPT[!is.na(data[,x])]))/(max(data$DEPT)-min(data$DEPT))))
-     myReactives$logList = logList
-     datatable(myReactives$logList,
+                          cover = cover
+     )
+     myReactives$logList=logList
+     if(is.null(data) || length(data)<2) return(NULL)
+     #browser()
+     
+     cover = sapply(names(data), FUN = function(x) 
+        round(100*(max(data$DEPT[!is.na(data[,x])])-min(data$DEPT[!is.na(data[,x])]))/(max(data$DEPT)-min(data$DEPT))))
+     myReactives$datasetDT = datatable(myReactives$logList,
                rownames = F,
                class = 'compact',
                options = list(
@@ -654,14 +695,19 @@ server <- function(input, output,session) {
                  scrollY = "400px",
                  scrollCollapse = TRUE,
                  pageLength = 15)
-               ) %>%
+     ) %>%
        formatStyle(
          'cover',
-        color = styleInterval(seq(0,100,34), c('white', 'red', 'blue','green'))
-#         backgroundSize = '100% 10%',
-#         backgroundRepeat = 'no-repeat',
-#         backgroundPosition = 'center'
+         color = styleInterval(seq(0,100,34), c('white', 'red', 'blue','green'))
+         #         backgroundSize = '100% 10%',
+         #         backgroundRepeat = 'no-repeat',
+         #         backgroundPosition = 'center'
        )
+   })
+   #### Plot Table ####
+   output$datasetDT <- renderDataTable({
+     #myReactives$datasetDT
+     myReactives$logList
    })
 }
 
