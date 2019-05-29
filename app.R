@@ -496,19 +496,25 @@ server <- function(input, output,session) {
      if(input$logInp) qlog[,input$selectInp] = log1p(qlog[,input$selectInp])
      if(input$logOut) qlog[,input$selectOut] = log1p(qlog[,input$selectOut])
      targetId=which(names(qlog)==input$selectOut)
-     qlog = qlog[complete.cases(qlog[,-targetId,drop=F]),-targetId,drop=FALSE]
+     baseId=which(names(qlog)==input$selectInp)
+     qlog = qlog[complete.cases(qlog[,c(-targetId,-baseId),drop=F]),c(-baseId,-targetId),drop=FALSE]
 
      if(dim(qlog)[1]<2) return(NULL)
      print(dim(qlog))
      #browser();
      print(c("qlog_clust=",colnames(qlog)))
-     myReactives$mc = Mclust(qlog,G=input$cls)#,modelNames = 'VVV')
+     #browser()
+     myReactives$mc = Mclust(scale(qlog),G=input$cls)#,modelNames = 'VVV')
+     #myReactives$mc = dbscan::dbscan(scale(qlog),eps=1.5/input$cls, minPts=10)#eps=sd(qlog$DT)*3/input$cls)
+     #myReactives$mc$classification=predict(myReactives$mc)
+     #myReactives$mc$data=qlog
      if(is.null(myReactives$mc)) {
        removeModal()
        return(NULL)
      }
      #print(c("qlog=",colnames(qlog)))
-     myReactives$mcres = cbind(qlog,VVV12 = predict(myReactives$mc)$classification)
+     #myReactives$mcres = cbind(qlog,VVV12 = predict(myReactives$mc)$classification)
+     myReactives$mcres = cbind(qlog,VVV12 = (myReactives$mc$classification))
      #print(capture.output(summary(myReactives$mcres)))
      updateSliderInput(session = session,inputId = 'clsid',min = 1,max=input$cls,value = min(input$clsid,input$cls))
      removeModal()
@@ -525,8 +531,8 @@ server <- function(input, output,session) {
      if(is.null(myReactives$mc) ||
         length(myReactives$data)<2
         || is.null(input$selectInp) || is.null(input$selectOut)
-        || input$selectInp=="" || input$selectOut==""
-        || !(input$selectInp %in% colnames(myReactives$mc$data) )) {#} && input$selectOut %in% colnames(myReactives$mc$data)) ) {
+        || input$selectInp=="" || input$selectOut==""){
+        #|| !(input$selectInp %in% colnames(myReactives$mc$data) )) {#} && input$selectOut %in% colnames(myReactives$mc$data)) ) {
        plotError("Выборка изменена, либо расчет не выполнен")
        return(NULL)
      }
@@ -550,7 +556,7 @@ server <- function(input, output,session) {
      # define dataset to use for models 
      #dat = myReactives$data[,c(input$selectInp,input$selectOut)]
      #dat$DPH = myReactives$data[[1]]
-     
+     browser()
      lmData = myReactives$qlog[,c(input$selectInp,input$selectOut)]
      lmData$DPH = as.numeric(rownames(myReactives$qlog))
      
